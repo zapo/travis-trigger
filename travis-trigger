@@ -1,0 +1,86 @@
+#!/usr/bin/env bash
+## -*- sh-basic-offset: 2 -*-
+
+set -o errexit -o nounset -o pipefail
+
+BASENAME=$(basename "$0")
+
+eval "$(docopts -A args -V - -h - : "$@" <<EOF
+Usage:
+  $BASENAME [options] <repo> <branch>
+  $BASENAME --help
+  $BASENAME --version
+
+Arguments:
+  <repo>        Repository slug, eg: repo/slug
+  <branch>      Rebuild latest build of <branch>, eg: master
+
+Options:
+  --request=REQUEST     JSON request overrides [default: {}]
+  --pro                 Use pro travis API
+  --trace               Print bash trace
+  --help                Show this message
+
+----
+$BASENAME
+EOF
+)"
+
+${args[--trace]} && set -o xtrace
+
+get_travis_token() {
+  local -a cmd_args=(--no-interactive --explode)
+  ${args[--pro]} && cmd_args+=(--pro)
+  travis token ${cmd_args[@]}
+}
+
+get_travis_url() {
+  local url="https://api.travis-ci"
+  if ${args[--pro]}; then
+    url="${url}.com"
+  else
+    url="${url}.org"
+  fi
+
+  echo $url
+}
+
+: ${TRAVIS_TOKEN:=$(get_travis_token)}
+: ${TRAVIS_URL:=$(get_travis_url)}
+
+TRAVIS_AUTH_HEADER="Authorization: token ${TRAVIS_TOKEN}"
+TRAVIS_API_HEADER="Travis-API-Version: 3"
+CURL="curl --silent --fail"
+
+cgi_escape() {
+  ruby -e "require 'cgi'; puts CGI.escape(ARGV[0].to_s)" "$1"
+}
+
+trigger_build() {
+  local repo; repo=$(cgi_escape $1)
+  local branch; branch=$2
+  local request; request=$3
+
+  local body; body=$(jq \
+    --arg branch "$branch" \
+    --argjson request "$request" \
+    -n '$request + { branch: $branch } | { request: . }'
+  )
+
+  $CURL -X POST \
+    -H "$TRAVIS_AUTH_HEADER" \
+    -H "$TRAVIS_API_HEADER" \
+    -H "Content-Type: application/json" \
+    -H "Accept: application/json" \
+    -d "$body" \
+    "$TRAVIS_URL/repo/$repo/requests"
+}
+
+main() {
+  local repo; repo=${args[<repo>]}
+  local branch; branch=${args[<branch>]}
+  local request; request=${args[--request]}
+  trigger_build "$repo" "$branch" "$request"
+}
+
+main
