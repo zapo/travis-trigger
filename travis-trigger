@@ -63,8 +63,8 @@ trigger_build() {
 
   local body; body=$(jq \
     --arg branch "$branch" \
-    --argjson request "$request" \
-    -n '$request + { branch: $branch } | { request: . }'
+    --arg request "$request" \
+    -n '($request | fromjson) + { branch: $branch } | { request: . }'
   )
 
   $CURL -X POST \
